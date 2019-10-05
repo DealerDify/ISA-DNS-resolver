@@ -1,2 +1,3 @@
 # ISA
-isa...
+Projekt ISA (VUT FIT) DNS resolver
+
