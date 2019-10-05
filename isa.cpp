@@ -65,6 +65,37 @@ int main(int argc, char **argv)
 				exit(-1);
 			}
 		}
+		else if (arguments[i] == "-p")
+		{
+			if(got_p)
+			{
+				fprintf(stderr, "Opakovane zadane -p\n");
+				exit(-1);
+			}
+			if ((i + 1) < arguments.size())
+			{
+				try
+				{
+					port_to_ask = std::stoi(arguments[i + 1]);
+				}
+				catch(const std::exception& e)
+				{
+					fprintf(stderr,"Za parametrem -p musi nasledovat cislo portu");
+				}
+				if (port_to_ask > 65535 || port_to_ask < 0)
+				{	
+					fprintf(stderr, "Port ouf of range 0-65535\n");
+					exit(-1);
+				}
+				got_p=true;
+                i++;
+			}
+			else
+			{
+				fprintf(stderr, "Chybi specifikace serveru u -s\n");
+				exit(-1);
+			}
+		}
 		else
 		{
 			if(got_name_to_ask)
@@ -79,9 +110,10 @@ int main(int argc, char **argv)
 
 	if (!(got_name_to_ask || got_s))
 	{
-		fprintf(stderr, "Argumenty -s a adrase jsou povinne\n");
+		fprintf(stderr, "Argumenty -s a adrasa jsou povinne\n");
 		exit(-1);
 	}
 
-
+	printf("nemam rad linux\n");
+	printf("r(rekurze):%d\nx(reverzni):%d\nipv6:%d\nport:%d %d\nserver:%d %s\nadresa na preklad:%s\n",got_r,got_x,got_6,got_p,port_to_ask,got_s,server_to_ask.c_str(),name_to_resolve.c_str());
 }
