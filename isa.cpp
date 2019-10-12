@@ -193,10 +193,10 @@ void print_info_from_dns_response(char *buffer,int *dosavadni_delka_paketu)
 		printf(", %s",rr_type_str);//vypis typu v opdovedi
 	}
 
-	const char *rr_class_str = get_code_of_dns_class(rr_type_int);
+	const char *rr_class_str = get_code_of_dns_class(rr_class_int);
 	if(!rr_class_str)
 	{//byl vracenu NULL tj nepodporovany typ
-		fprintf(stderr,"Unknown class in DNS response: %d\n",rr_type_int);
+		fprintf(stderr,"Unknown class in DNS response: %d\n",rr_class_int);
 		exit(1);
 	}
 	printf(", %s",rr_class_str);//vypis classy v opdovedi
@@ -218,7 +218,10 @@ void print_info_from_dns_response(char *buffer,int *dosavadni_delka_paketu)
 	}
 	else if (rr_type_int == 28)
 	{//typ AAAA rdata obsahuji ipv6 adresu
-		//todo
+		char src[16];//ipv6 adresa
+		memcpy(src,buffer+(*dosavadni_delka_paketu),rr_rlen_int);
+		char tmp[INET6_ADDRSTRLEN];//tmp buffer pro inet_ntop funkci
+		printf("%s\n",inet_ntop(AF_INET6,src,tmp,INET6_ADDRSTRLEN));
 	}
 	else if(rr_type_int == 5 || rr_type_int == 2)
 	{//rdata obsahuji jmeno (CNAME nebo NS)
@@ -391,7 +394,7 @@ int main(int argc, char **argv)
 	memset(buffer, 0, PCKT_LEN);
 
 	struct dns_header *dns_hdr = (struct dns_header *) buffer;
-	dosavadni_delka_paketu += sizeof(struct dns_header);
+	dosavadni_delka_paketu += 12; //dns header zabira 12 bytu
 	dns_hdr->id = htons(RANDOM_NUMBER_FOR_ID);
 	dns_hdr->qdcount=htons(1);//zasilame 1 dotaz
 	if(got_r)
@@ -405,8 +408,15 @@ int main(int argc, char **argv)
 	strncpy(buffer+dosavadni_delka_paketu,qname.c_str(),qname.length());
 	dosavadni_delka_paketu+=qname.length()+1;
 	struct question *q = (struct question *) (buffer+dosavadni_delka_paketu);//delka dns headeru + delka stringu + \0
-	dosavadni_delka_paketu+=sizeof(struct question);
-	q->qtype = htons(1); //typ A (a host adress)
+	dosavadni_delka_paketu+=4; // qtype a qclass jsou na 4 bytech
+	if(got_6)
+	{
+		q->qtype = htons(28); //typ AAAA ipv6
+	}
+	else
+	{
+		q->qtype = htons(1); //typ A ipv4
+	}
 	q->qclass = htons(1); //typ IN (the internet)
 	
 	int sd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -438,39 +448,39 @@ int main(int argc, char **argv)
 	alarm(0);//vypnuti alarmu pokud dosla odpoved
 	dosavadni_delka_paketu = 0;
 	struct dns_header *dns_hdr_ans = (struct dns_header *) buffer;
-	dosavadni_delka_paketu += sizeof(struct dns_header);
+	dosavadni_delka_paketu += 12; //dns header zabira 12 bytu
 	uint16_t flags = ntohs(dns_hdr_ans->flags);
 	if(flags&(0b0000010000000000)) //vymaskovani AA flagu
 	{
-		printf("AA: 1, ");
+		printf("Authority: 1, ");
 	}
 	else
 	{
-		printf("AA: 0, ");
+		printf("Authority: 0, ");
 	}
 	if(flags&(0b0000001000000000)) //vymaskovani TC flagu
 	{
-		printf("TC: 1, ");
+		printf("Truncated: 1, ");
 	}
 	else
 	{
-		printf("TC: 0, ");
+		printf("Truncated: 0, ");
 	}
 	if(flags&(0b0000000100000000)) //vymaskovani RD flagu
 	{
-		printf("RD: 1, ");
+		printf("Recursion desired: 1, ");
 	}
 	else
 	{
-		printf("RD: 0, ");
+		printf("Recursion desired: 0, ");
 	}
 	if(flags&(0b0000000010000000)) //vymaskovani RA flagu
 	{
-		printf("RA: 1, ");
+		printf("Recursion available: 1, ");
 	}
 	else
 	{
-		printf("RA: 0, ");
+		printf("Recursion available: 0, ");
 	}
 	printf("\n");
 	printf("Question section(%d)\n",ntohs(dns_hdr_ans->qdcount));
@@ -481,7 +491,7 @@ int main(int argc, char **argv)
 	struct question *q_in_response = (struct question *) (buffer + dosavadni_delka_paketu);
 	int q_type_int = ntohs(q_in_response->qtype);
 	int q_class_int = ntohs(q_in_response->qclass);
-	dosavadni_delka_paketu+=sizeof(struct question);
+	dosavadni_delka_paketu+=4; // qtype a qclass jsou na 4 bytech
 	const char *q_type_str = get_code_of_dns_type(q_type_int);
 
 	if(!q_type_str)
@@ -493,10 +503,10 @@ int main(int argc, char **argv)
 		printf(", %s",q_type_str);//vypis typu v question casti
 	}
 
-	const char *q_class_str = get_code_of_dns_class(q_type_int);
+	const char *q_class_str = get_code_of_dns_class(q_class_int);
 	if(!q_class_str)
 	{//byl vracenu NULL tj nepodporovany typ
-		fprintf(stderr,"Unknown class in DNS response: %d\n",q_type_int);
+		fprintf(stderr,"Unknown class in DNS response: %d\n",q_class_int);
 		exit(1);
 	}
 	printf(", %s\n",q_class_str);//vypis classy v question casti
