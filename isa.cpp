@@ -19,7 +19,7 @@
 void alarm_handler(int sig)
 {
 	printf("Vyprsel cekaci cas na odpoved\n");
-	exit(1);
+	//exit(1);
 }
 
 struct dns_header
@@ -49,6 +49,15 @@ struct question
 	uint16_t qclass;
 };
 
+struct rr_data
+{
+	//name reseno mimo struct
+	uint16_t type;
+	uint16_t cl; //class
+	uint32_t ttl;
+	uint16_t rdlength;
+	//radata reseno mimo struct
+};
 
 
 //vypise na stderr info o pouziti a skonci s chybovym kodem 1
@@ -59,16 +68,67 @@ void wrong_params()
 	exit(1);
 }
 
+const char * get_code_of_dns_type(int type)
+{
+	switch (type)
+	{
+	case 1: return "A";
+	case 28: return "AAAA";
+	case 2: return "NS";
+	case 5: return "CNAME";	
+	case 16: return "TXT";
+	default: return NULL; //other are printes as chars
+	}
+}
+const char * get_code_of_dns_class(int type)
+{
+	switch (type)
+	{
+	case 1: return "IN";
+	case 2: return "CS";
+	case 3: return "CH";	
+	case 4: return "HS";
+	default: return NULL; //not supported class
+	}
+}
+
+std::string name_to_len_plus_label(std::string name)
+{
+	std::string out;
+	int cnt = 0;
+	for(int i = 0; i < name.length(); i ++)
+	{
+		if(name[i] == '.')
+		{//pokud narazime na tecku zapiseme delku labelu doted precteneho, pred zacatek toho labelu
+			out.insert(i-cnt,1,(char)cnt);
+            cnt =0;
+		}
+		else
+		{
+			cnt++;
+			out+=name[i];
+		}
+	}
+    out.insert(name.length()-cnt,1,(char)cnt);//pokud dorazime na konec zapiseme delku labelu mezi teckou a koncem
+	return out;
+}
+
 //transformuje zapis jmena v paketu na citelnou podobu (vcetne pointeru)
 //buffer: buffer cele odpovedi zacinajici dns headerem
 //star_offest: odkud se ma zacit cist jmeno
-std::string get_name_from_answer(char *buffer,int start_offset)
+//name_len: vrati zde delku jmena co se precetla z paketu... alias o kolik se potom v bufferu posunout
+std::string get_name_from_answer(char *buffer,int start_offset, int *name_len)
 {
+	*name_len = 0;
 	std::string name;
 	int i = start_offset;
 	unsigned int offset = 0;
 	while (buffer[i]!=0)
 	{
+		if(i > start_offset)
+		{
+			*name_len = i-start_offset;
+		}
 		if((buffer[i]&0b11000000) ==  0b11000000) //jedna se o pointer (zacina dvema jednickami)
 		{
 			offset = (buffer[i]&(0b00111111))+buffer[i+1];//offset je za 2 zminenymi jednickami na zbyvajicich 14 bitech
@@ -80,6 +140,12 @@ std::string get_name_from_answer(char *buffer,int start_offset)
 			i++;
 		}
 	}
+
+	//pokud se jednalo o pointer tak pointer je velikosti 16b (2xchar)
+	//pokud se jednalo o string tak +1 za zacatek (start_offset a i jsou stejne tj 0, ale precetl se 1 char)
+	//                          a jeste +1 za ukoncovaci 0 (skonci while cyklus a uz se nepricte)
+	//tj v obrou pripadech +=2
+	*name_len +=2;  
 
 	//prevod z delka+znaky na citelnou adresu
 	//napriklad z "\3www\5vutbr\2cz" na "www.vutbr.cz" 
@@ -100,6 +166,79 @@ std::string get_name_from_answer(char *buffer,int start_offset)
 	}
 	return final_name;	
 }
+
+//vypise info z jednotlivych sekci (answer, additional, authoritative)
+void print_info_from_dns_response(char *buffer,int *dosavadni_delka_paketu)
+{
+	int name_len;
+	std::string name_in_answer = get_name_from_answer(buffer,*dosavadni_delka_paketu,&name_len);
+	//printf("%s delka: %d delkanamelen: %d\n",b.c_str(),b.length(),name_len);
+	printf("%s",name_in_answer.c_str());
+	*dosavadni_delka_paketu+=name_len;
+	struct rr_data *rr = (struct rr_data *) (buffer+*dosavadni_delka_paketu);
+	*dosavadni_delka_paketu+=10;//mezi name a rdata je 80 bitu... tj posun o 10 bytu
+
+	int rr_type_int = ntohs(rr->type);
+	int rr_class_int = ntohs(rr->cl);
+	int rr_ttl_int = ntohl(rr->ttl);
+	int rr_rlen_int = ntohs(rr->rdlength);
+	const char *rr_type_str = get_code_of_dns_type(rr_type_int);
+
+	if(!rr_type_str)
+	{//byl vracenu NULL tj nepodporovany typ
+		fprintf(stderr,"Unknown type in DNS response: %d\n",rr_type_int);
+	}
+	else
+	{
+		printf(", %s",rr_type_str);//vypis typu v opdovedi
+	}
+
+	const char *rr_class_str = get_code_of_dns_class(rr_type_int);
+	if(!rr_class_str)
+	{//byl vracenu NULL tj nepodporovany typ
+		fprintf(stderr,"Unknown class in DNS response: %d\n",rr_type_int);
+		exit(1);
+	}
+	printf(", %s",rr_class_str);//vypis classy v opdovedi
+	
+	printf(", %d, ", rr_ttl_int);//vypis ttl
+
+	/*printf("\n");
+	for(int i = dosavadni_delka_paketu-4 ; i < dosavadni_delka_paketu + 10 ; i++)
+	{
+		printf("%x|",buffer[i]);
+	}
+	printf("\n");*/
+
+	if(rr_type_int == 1)
+	{//typ A rdata obsahuji ipv4 adresu
+		struct in_addr adresa;
+		adresa.s_addr = *(uint32_t*)(buffer+*dosavadni_delka_paketu);
+		printf("%s\n",inet_ntoa(adresa));//vypis ipv4 adresy
+	}
+	else if (rr_type_int == 28)
+	{//typ AAAA rdata obsahuji ipv6 adresu
+		//todo
+	}
+	else if(rr_type_int == 5 || rr_type_int == 2)
+	{//rdata obsahuji jmeno (CNAME nebo NS)
+		std::string name_in_rdata = get_name_from_answer(buffer,*dosavadni_delka_paketu,&name_len);
+		printf("%s\n",name_in_rdata.c_str());//vypis jmena v odpovedi
+	}
+	else
+	{//rdata jsou brana jako text
+		std::string string_in_answer;
+		for(int i=*dosavadni_delka_paketu;i<*dosavadni_delka_paketu+rr_rlen_int;i++)
+		{
+			string_in_answer+=buffer[i];
+			printf("%s\n",string_in_answer.c_str());//vypis dat v odpovedi
+		}
+	}
+	
+	*dosavadni_delka_paketu+=rr_rlen_int;//delka rdat
+
+}
+
 
 int main(int argc, char **argv)
 {
@@ -262,9 +401,9 @@ int main(int argc, char **argv)
 	dns_hdr->flags=htons(dns_hdr->flags);
 	//zbytek casti dns headeru zustava 0
 
-	char * qname = "\3www\6google\3com";
-	strncpy(buffer+dosavadni_delka_paketu,qname,strlen(qname));
-	dosavadni_delka_paketu+=strlen(qname) +1;
+	std::string qname = name_to_len_plus_label(name_to_resolve);
+	strncpy(buffer+dosavadni_delka_paketu,qname.c_str(),qname.length());
+	dosavadni_delka_paketu+=qname.length()+1;
 	struct question *q = (struct question *) (buffer+dosavadni_delka_paketu);//delka dns headeru + delka stringu + \0
 	dosavadni_delka_paketu+=sizeof(struct question);
 	q->qtype = htons(1); //typ A (a host adress)
@@ -296,6 +435,7 @@ int main(int argc, char **argv)
 		fprintf(stderr,"recvfrom() error errno:%i\n%s\n",errno,strerror(errno));
 		exit(-1);
 	}
+	alarm(0);//vypnuti alarmu pokud dosla odpoved
 	dosavadni_delka_paketu = 0;
 	struct dns_header *dns_hdr_ans = (struct dns_header *) buffer;
 	dosavadni_delka_paketu += sizeof(struct dns_header);
@@ -334,14 +474,57 @@ int main(int argc, char **argv)
 	}
 	printf("\n");
 	printf("Question section(%d)\n",ntohs(dns_hdr_ans->qdcount));
-	std::string a = get_name_from_answer(buffer,dosavadni_delka_paketu);
-	printf("%s\n",a.c_str());
-	printf("Answer section(%d)\n",ntohs(dns_hdr_ans->ancount));
-	printf("Authority section(%d)\n",ntohs(dns_hdr_ans->nscount));
-	printf("Additional section(%d)\n",ntohs(dns_hdr_ans->arcount));
-	
-	dosavadni_delka_paketu+=a.length()+2; //+2 protoze end of string a puvodni cislo pred zacatkem jmena
+	int name_len = 0;
+	std::string name_in_question = get_name_from_answer(buffer,dosavadni_delka_paketu,&name_len);
+	printf("%s",name_in_question.c_str());
+	dosavadni_delka_paketu+=name_len;//posuv za jmeno
+	struct question *q_in_response = (struct question *) (buffer + dosavadni_delka_paketu);
+	int q_type_int = ntohs(q_in_response->qtype);
+	int q_class_int = ntohs(q_in_response->qclass);
 	dosavadni_delka_paketu+=sizeof(struct question);
-	std::string b = get_name_from_answer(buffer,dosavadni_delka_paketu);
-	printf("string: %s\n",b.c_str());
+	const char *q_type_str = get_code_of_dns_type(q_type_int);
+
+	if(!q_type_str)
+	{//byl vracenu NULL tj nepodporovany typ
+		fprintf(stderr,"Unknown type in DNS response: %d\n",q_type_int);
+	}
+	else
+	{
+		printf(", %s",q_type_str);//vypis typu v question casti
+	}
+
+	const char *q_class_str = get_code_of_dns_class(q_type_int);
+	if(!q_class_str)
+	{//byl vracenu NULL tj nepodporovany typ
+		fprintf(stderr,"Unknown class in DNS response: %d\n",q_type_int);
+		exit(1);
+	}
+	printf(", %s\n",q_class_str);//vypis classy v question casti
+
+
+	int pocet_ans = ntohs(dns_hdr_ans->ancount);
+	int pocet_auth = ntohs(dns_hdr_ans->nscount);
+	int pocet_add = ntohs(dns_hdr_ans->arcount);
+
+	printf("Answer section(%d)\n",pocet_ans);
+	for(int i = 0; i < pocet_ans; i++)
+	{
+		print_info_from_dns_response(buffer, &dosavadni_delka_paketu);
+	}
+
+	printf("Authority section(%d)\n",pocet_auth);
+	for(int i = 0; i < pocet_auth; i++)
+	{
+		print_info_from_dns_response(buffer, &dosavadni_delka_paketu);
+	}
+
+	printf("Additional section(%d)\n",pocet_add);
+	for(int i = 0; i < pocet_add; i++)
+	{
+		print_info_from_dns_response(buffer, &dosavadni_delka_paketu);
+	}
+	
+	
+
+
 }
