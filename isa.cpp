@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string>
 #include <string.h> //memset
-#include <vector>
+#include <vector> //parsovani argumentu
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netdb.h> //pro preklad domenoveho jmena serveru DNS
@@ -19,7 +19,7 @@
 void alarm_handler(int sig)
 {
 	printf("Vyprsel cekaci cas na odpoved\n");
-	//exit(1);
+	exit(1);
 }
 
 struct dns_header
@@ -172,7 +172,6 @@ void print_info_from_dns_response(char *buffer,int *dosavadni_delka_paketu)
 {
 	int name_len;
 	std::string name_in_answer = get_name_from_answer(buffer,*dosavadni_delka_paketu,&name_len);
-	//printf("%s delka: %d delkanamelen: %d\n",b.c_str(),b.length(),name_len);
 	printf("%s",name_in_answer.c_str());
 	*dosavadni_delka_paketu+=name_len;
 	struct rr_data *rr = (struct rr_data *) (buffer+*dosavadni_delka_paketu);
@@ -202,13 +201,6 @@ void print_info_from_dns_response(char *buffer,int *dosavadni_delka_paketu)
 	printf(", %s",rr_class_str);//vypis classy v opdovedi
 	
 	printf(", %d, ", rr_ttl_int);//vypis ttl
-
-	/*printf("\n");
-	for(int i = dosavadni_delka_paketu-4 ; i < dosavadni_delka_paketu + 10 ; i++)
-	{
-		printf("%x|",buffer[i]);
-	}
-	printf("\n");*/
 
 	if(rr_type_int == 1)
 	{//typ A rdata obsahuji ipv4 adresu
@@ -354,7 +346,7 @@ int main(int argc, char **argv)
 		wrong_params();
 	}
 
-	printf("r(rekurze):%d\nx(reverzni):%d\nipv6:%d\nport:%d %d\nserver:%d %s\nadresa na preklad:%s\n",got_r,got_x,got_6,got_p,port_to_ask,got_s,server_to_ask.c_str(),name_to_resolve.c_str());
+	//printf("r(rekurze):%d\nx(reverzni):%d\nipv6:%d\nport:%d %d\nserver:%d %s\nadresa na preklad:%s\n",got_r,got_x,got_6,got_p,port_to_ask,got_s,server_to_ask.c_str(),name_to_resolve.c_str());
 //---------------------------------------END-ARGUMENTS PARSE-END-----------------------------------------
 
 
@@ -419,7 +411,7 @@ int main(int argc, char **argv)
 	}
 	q->qclass = htons(1); //typ IN (the internet)
 	
-	int sd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	int sd = socket(addr->sa_family, SOCK_DGRAM, IPPROTO_UDP);
 	if(sd < 0)
 	{
 		fprintf(stderr,"socket() error\n");
@@ -428,16 +420,23 @@ int main(int argc, char **argv)
 
 	struct sockaddr_in *server = (struct sockaddr_in *)addr;
 	server->sin_port=htons(port_to_ask);
+	socklen_t len;
+	if(addr->sa_family==AF_INET6)
+	{
+		 len = sizeof(struct sockaddr_in6);
+	}
+	else
+	{
+		len = sizeof(struct sockaddr_in);
+	}
 	
-	socklen_t len = sizeof(struct sockaddr_in);
-	//printf("sd:%d\nbuffer:%d\ndelka:%d\nadresa:%s\n",sd,buffer,dosavadni_delka_paketu,inet_ntoa(server->sin_addr));
 	if( sendto(sd,buffer,dosavadni_delka_paketu,0,(struct sockaddr *)server,len)< 0)
 	{
 		fprintf(stderr,"sendto() error errno:%i\n%s\n",errno,strerror(errno));
 		exit(-1);
 	}
 
-	alarm(3);//timeout pro udp... protoze nemusi prijit odpoved
+	alarm(3);//timeout pro odpoved, protoze nemusi prijit...
 	signal(SIGALRM, alarm_handler);
 	memset(buffer, 0, PCKT_LEN);
 	if(recvfrom(sd,buffer,PCKT_LEN,0,(struct sockaddr *)server,&len)< 0)
@@ -483,15 +482,18 @@ int main(int argc, char **argv)
 		printf("Recursion available: 0, ");
 	}
 	printf("\n");
+
 	printf("Question section(%d)\n",ntohs(dns_hdr_ans->qdcount));
+
 	int name_len = 0;
 	std::string name_in_question = get_name_from_answer(buffer,dosavadni_delka_paketu,&name_len);
 	printf("%s",name_in_question.c_str());
 	dosavadni_delka_paketu+=name_len;//posuv za jmeno
+
 	struct question *q_in_response = (struct question *) (buffer + dosavadni_delka_paketu);
+	dosavadni_delka_paketu+=4; // qtype a qclass jsou na 4 bytech
 	int q_type_int = ntohs(q_in_response->qtype);
 	int q_class_int = ntohs(q_in_response->qclass);
-	dosavadni_delka_paketu+=4; // qtype a qclass jsou na 4 bytech
 	const char *q_type_str = get_code_of_dns_type(q_type_int);
 
 	if(!q_type_str)
