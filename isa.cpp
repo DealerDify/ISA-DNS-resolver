@@ -59,6 +59,16 @@ struct rr_data
 	//radata reseno mimo struct
 };
 
+struct SOA_data
+{
+	uint32_t serial;
+	uint32_t refresh;
+	uint32_t retry;
+	uint32_t expire;
+	uint32_t minimum;
+};
+
+
 
 //vypise na stderr info o pouziti a skonci s chybovym kodem 1
 void wrong_params()
@@ -76,6 +86,7 @@ const char * get_code_of_dns_type(int type)
 	case 28: return "AAAA";
 	case 2: return "NS";
 	case 5: return "CNAME";	
+	case 6: return "SOA";	
 	case 16: return "TXT";
 	default: return NULL; //other are printes as chars
 	}
@@ -89,6 +100,20 @@ const char * get_code_of_dns_class(int type)
 	case 3: return "CH";	
 	case 4: return "HS";
 	default: return NULL; //not supported class
+	}
+}
+
+const char * get_code_of_dns_rcode(int type)
+{
+	switch (type)
+	{
+	case 0: return "OK";
+	case 1: return "Format Error";
+	case 2: return "Server failure";
+	case 3: return "Name Error";	
+	case 4: return "Not implemented";
+	case 5: return "Refused";
+	default: return NULL; //chyba
 	}
 }
 
@@ -119,6 +144,12 @@ std::string name_to_len_plus_label(std::string name)
 //name_len: vrati zde delku jmena co se precetla z paketu... alias o kolik se potom v bufferu posunout
 std::string get_name_from_answer(char *buffer,int start_offset, int *name_len)
 {
+	if(buffer[start_offset]==0)
+	{
+		*name_len=1;
+		return std::string("root");
+	}
+	//else
 	*name_len = 0;
 	std::string name;
 	int i = start_offset;
@@ -131,7 +162,7 @@ std::string get_name_from_answer(char *buffer,int start_offset, int *name_len)
 		}
 		if((buffer[i]&0b11000000) ==  0b11000000) //jedna se o pointer (zacina dvema jednickami)
 		{
-			offset = (buffer[i]&(0b00111111))+buffer[i+1];//offset je za 2 zminenymi jednickami na zbyvajicich 14 bitech
+			offset = (buffer[i]&(0b00111111))+(buffer[i+1]&(0b11111111));//offset je za 2 zminenymi jednickami na zbyvajicich 14 bitech
 			i = offset;
 		}
 		else
@@ -185,7 +216,7 @@ void print_info_from_dns_response(char *buffer,int *dosavadni_delka_paketu)
 
 	if(!rr_type_str)
 	{//byl vracenu NULL tj nepodporovany typ
-		fprintf(stderr,"Unknown type in DNS response: %d\n",rr_type_int);
+		fprintf(stderr,", Unknown type in DNS response: %d",rr_type_int);
 	}
 	else
 	{
@@ -195,7 +226,7 @@ void print_info_from_dns_response(char *buffer,int *dosavadni_delka_paketu)
 	const char *rr_class_str = get_code_of_dns_class(rr_class_int);
 	if(!rr_class_str)
 	{//byl vracenu NULL tj nepodporovany typ
-		fprintf(stderr,"Unknown class in DNS response: %d\n",rr_class_int);
+		fprintf(stderr,", Unknown class in DNS response: %d\n",rr_class_int);
 		exit(1);
 	}
 	printf(", %s",rr_class_str);//vypis classy v opdovedi
@@ -220,14 +251,31 @@ void print_info_from_dns_response(char *buffer,int *dosavadni_delka_paketu)
 		std::string name_in_rdata = get_name_from_answer(buffer,*dosavadni_delka_paketu,&name_len);
 		printf("%s\n",name_in_rdata.c_str());//vypis jmena v odpovedi
 	}
+	else if(rr_type_int == 6)
+	{//rdata obsahuji SOA
+		int tmp = *dosavadni_delka_paketu;
+		std::string mname_in_rdata = get_name_from_answer(buffer,tmp,&name_len);
+		printf("\nmname: %s\n",mname_in_rdata.c_str());//vypis m jmena v odpovedi
+		tmp+=name_len;//posuv za jmeno
+		std::string rname_in_rdata = get_name_from_answer(buffer,tmp,&name_len);
+		printf("rname: %s\n",rname_in_rdata.c_str());//vypis r jmena v odpovedi
+		tmp+=name_len;//posuv za jmeno
+		struct SOA_data *soa = (struct SOA_data*) (buffer+tmp);
+		printf("Serial number: %d\n",ntohl(soa->serial));
+		printf("Refresh interval: %d s\n",ntohl(soa->refresh));
+		printf("Retry interval: %d s\n",ntohl(soa->retry));
+		printf("Expire limit: %d s\n",ntohl(soa->expire));
+		printf("Minimum TTL: %d s\n",ntohl(soa->minimum));
+	}
 	else
 	{//rdata jsou brana jako text
 		std::string string_in_answer;
 		for(int i=*dosavadni_delka_paketu;i<*dosavadni_delka_paketu+rr_rlen_int;i++)
 		{
-			string_in_answer+=buffer[i];
-			printf("%s\n",string_in_answer.c_str());//vypis dat v odpovedi
+			string_in_answer+=buffer[i];		
 		}
+		printf("%s\n",string_in_answer.c_str());//vypis dat v odpovedi
+		
 	}
 	
 	*dosavadni_delka_paketu+=rr_rlen_int;//delka rdat
@@ -388,28 +436,70 @@ int main(int argc, char **argv)
 	struct dns_header *dns_hdr = (struct dns_header *) buffer;
 	dosavadni_delka_paketu += 12; //dns header zabira 12 bytu
 	dns_hdr->id = htons(RANDOM_NUMBER_FOR_ID);
-	dns_hdr->qdcount=htons(1);//zasilame 1 dotaz
+	
 	if(got_r)
 	{//recursion desired
 		dns_hdr->flags |= 0b0000000100000000;//RD flag = 1
 	}
-	dns_hdr->flags=htons(dns_hdr->flags);
-	//zbytek casti dns headeru zustava 0
-
-	std::string qname = name_to_len_plus_label(name_to_resolve);
-	strncpy(buffer+dosavadni_delka_paketu,qname.c_str(),qname.length());
-	dosavadni_delka_paketu+=qname.length()+1;
-	struct question *q = (struct question *) (buffer+dosavadni_delka_paketu);//delka dns headeru + delka stringu + \0
-	dosavadni_delka_paketu+=4; // qtype a qclass jsou na 4 bytech
-	if(got_6)
-	{
-		q->qtype = htons(28); //typ AAAA ipv6
+	if(got_x)
+	{//inverzni dotaz
+		dns_hdr->flags |= 0b0000100000000000;//opcode = 1 (inverse query)
+		dns_hdr->ancount=htons(1);//zasilame 1 "odpoved"
+		dosavadni_delka_paketu+=1; //pridana 1 nula jako "anyname" (root)
+		struct rr_data *reverse_q = (struct rr_data*) (buffer+dosavadni_delka_paketu);
+		dosavadni_delka_paketu+=10;//mezi name a rdata je 80 bitu... tj posun o 10 bytu
+		reverse_q->cl=ntohs(1);//IN
+		if(got_6)
+		{
+			reverse_q->type = htons(28); //typ AAAA ipv6
+			reverse_q->rdlength = htons(16); //128 bitu
+			struct in6_addr ip6_a;
+			if(inet_pton(AF_INET6,name_to_resolve.c_str(),&ip6_a)==0)
+			{
+				fprintf(stderr,"Invalid ipv6 adress to make inverse query\n");
+				exit(-1);
+			}
+			memcpy(buffer+dosavadni_delka_paketu,&ip6_a,16);
+			dosavadni_delka_paketu+=16;
+		}
+		else
+		{
+			reverse_q->type = htons(1); //typ A ipv4
+			reverse_q->rdlength = htons(4); //32 bitu
+			struct in_addr ip_a;
+			if(inet_pton(AF_INET,name_to_resolve.c_str(),&ip_a)==0)
+			{
+				fprintf(stderr,"Invalid ipv4 adress to make inverse query\n");
+				exit(-1);
+			}
+			memcpy(buffer+dosavadni_delka_paketu,&ip_a,4);
+			dosavadni_delka_paketu+=4;
+		}
+		reverse_q->ttl=ntohl(100);//random hodnota... (ttl is not significat viz rfc1035)
+		
+		
 	}
 	else
-	{
-		q->qtype = htons(1); //typ A ipv4
+	{//normalni dotaz
+		dns_hdr->qdcount=htons(1);//zasilame 1 dotaz
+		std::string qname = name_to_len_plus_label(name_to_resolve);
+		strncpy(buffer+dosavadni_delka_paketu,qname.c_str(),qname.length());
+		dosavadni_delka_paketu+=qname.length()+1;
+		struct question *q = (struct question *) (buffer+dosavadni_delka_paketu);//delka dns headeru + delka stringu + \0
+		dosavadni_delka_paketu+=4; // qtype a qclass jsou na 4 bytech
+		if(got_6)
+		{
+			q->qtype = htons(28); //typ AAAA ipv6
+		}
+		else
+		{
+			q->qtype = htons(1); //typ A ipv4
+		}
+		q->qclass = htons(1); //typ IN (the internet)
 	}
-	q->qclass = htons(1); //typ IN (the internet)
+	dns_hdr->flags=htons(dns_hdr->flags);
+	//zbytek casti dns headeru zustava 0
+	
 	
 	int sd = socket(addr->sa_family, SOCK_DGRAM, IPPROTO_UDP);
 	if(sd < 0)
@@ -449,6 +539,7 @@ int main(int argc, char **argv)
 	struct dns_header *dns_hdr_ans = (struct dns_header *) buffer;
 	dosavadni_delka_paketu += 12; //dns header zabira 12 bytu
 	uint16_t flags = ntohs(dns_hdr_ans->flags);
+	int rcode_ans = ntohs(dns_hdr_ans->flags) &0b1111; //posledni 4 bity jsou rcode
 	if(flags&(0b0000010000000000)) //vymaskovani AA flagu
 	{
 		printf("Authority: 1, ");
@@ -481,42 +572,57 @@ int main(int argc, char **argv)
 	{
 		printf("Recursion available: 0, ");
 	}
-	printf("\n");
-
-	printf("Question section(%d)\n",ntohs(dns_hdr_ans->qdcount));
-
-	int name_len = 0;
-	std::string name_in_question = get_name_from_answer(buffer,dosavadni_delka_paketu,&name_len);
-	printf("%s",name_in_question.c_str());
-	dosavadni_delka_paketu+=name_len;//posuv za jmeno
-
-	struct question *q_in_response = (struct question *) (buffer + dosavadni_delka_paketu);
-	dosavadni_delka_paketu+=4; // qtype a qclass jsou na 4 bytech
-	int q_type_int = ntohs(q_in_response->qtype);
-	int q_class_int = ntohs(q_in_response->qclass);
-	const char *q_type_str = get_code_of_dns_type(q_type_int);
-
-	if(!q_type_str)
-	{//byl vracenu NULL tj nepodporovany typ
-		fprintf(stderr,"Unknown type in DNS response: %d\n",q_type_int);
+	const char* rcode_ans_str = get_code_of_dns_rcode(rcode_ans);
+	if(rcode_ans_str)
+	{
+		printf("Reply code: %d(%s)\n",rcode_ans,rcode_ans_str);
 	}
 	else
 	{
-		printf(", %s",q_type_str);//vypis typu v question casti
+		printf("Reply code: %d\n",rcode_ans);
 	}
-
-	const char *q_class_str = get_code_of_dns_class(q_class_int);
-	if(!q_class_str)
-	{//byl vracenu NULL tj nepodporovany typ
-		fprintf(stderr,"Unknown class in DNS response: %d\n",q_class_int);
-		exit(1);
-	}
-	printf(", %s\n",q_class_str);//vypis classy v question casti
+	
+	printf("\n");
 
 
+	int pocet_q = ntohs(dns_hdr_ans->qdcount);
 	int pocet_ans = ntohs(dns_hdr_ans->ancount);
 	int pocet_auth = ntohs(dns_hdr_ans->nscount);
 	int pocet_add = ntohs(dns_hdr_ans->arcount);
+
+	printf("Question section(%d)\n",pocet_q);
+	if(pocet_q==1)
+	{//byl zaslan pouze 1 dotaz (pokud neni v odpovedi, tak nemuze byt vypsan)
+		int name_len = 0;
+		std::string name_in_question = get_name_from_answer(buffer,dosavadni_delka_paketu,&name_len);
+		printf("%s",name_in_question.c_str());
+		dosavadni_delka_paketu+=name_len;//posuv za jmeno
+
+		struct question *q_in_response = (struct question *) (buffer + dosavadni_delka_paketu);
+		dosavadni_delka_paketu+=4; // qtype a qclass jsou na 4 bytech
+		int q_type_int = ntohs(q_in_response->qtype);
+		int q_class_int = ntohs(q_in_response->qclass);
+		const char *q_type_str = get_code_of_dns_type(q_type_int);
+
+		if(!q_type_str)
+		{//byl vracenu NULL tj nepodporovany typ
+			fprintf(stderr,", Unknown type in DNS response: %d",q_type_int);
+		}
+		else
+		{
+			printf(", %s",q_type_str);//vypis typu v question casti
+		}
+
+		const char *q_class_str = get_code_of_dns_class(q_class_int);
+		if(!q_class_str)
+		{//byl vracenu NULL tj nepodporovany typ
+			fprintf(stderr,", Unknown class in DNS response: %d\n",q_class_int);
+			exit(1);
+		}
+		printf(", %s\n",q_class_str);//vypis classy v question casti
+	}
+	
+	
 
 	printf("Answer section(%d)\n",pocet_ans);
 	for(int i = 0; i < pocet_ans; i++)
