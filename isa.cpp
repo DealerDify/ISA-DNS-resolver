@@ -16,6 +16,12 @@
 #define PCKT_LEN 65507 //mela by byt maximalni mozna delka udp (pravdepodobne plati jen na ipv4)
 #define RANDOM_NUMBER_FOR_ID 4560
 
+
+//site: https://stackoverflow.com/questions/10723403/char-array-to-hex-string-c
+//answer: https://stackoverflow.com/a/10723475
+char const hex_to_char[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
+
+
 void alarm_handler(int sig)
 {
 	printf("Vyprsel cekaci cas na odpoved\n");
@@ -87,6 +93,7 @@ const char * get_code_of_dns_type(int type)
 	case 2: return "NS";
 	case 5: return "CNAME";	
 	case 6: return "SOA";	
+	case 12: return "PTR";	
 	case 16: return "TXT";
 	default: return NULL; //other are printes as chars
 	}
@@ -115,6 +122,66 @@ const char * get_code_of_dns_rcode(int type)
 	case 5: return "Refused";
 	default: return NULL; //chyba
 	}
+}
+
+
+//konvertuje ::1 => 0.0.0.0.0.0.....1 (32 cisel)
+//pokud je name neplatana ipv6 adresa ukonci program s chybovym kodem 1
+std::string name_ip6_to_dots(std::string name)
+{
+	std::string out;
+	uint8_t i6_addr[16];
+    if(inet_pton(AF_INET6,name.c_str(),i6_addr))
+	{
+		for(int i = 0 ; i < 16 ; i ++)
+		{
+			out+=hex_to_char[i6_addr[i]>>4];
+			out+='.';
+			out+=hex_to_char[i6_addr[i]&0b00001111];
+			out+='.';
+		}
+		out.pop_back();//smaze tecku na konci
+	}
+	else
+	{
+		fprintf(stderr,"Neplatana ipv6 adresa\n");
+		exit(1);
+	}
+    return out;
+}
+
+
+std::string name_reverse_ip(std::string name, bool ipv6)
+{
+	std::string out;
+	std::vector<std::string> tmp_vec;
+	std::string tmp_str;
+	for(int i = 0; i < name.length(); i ++)
+	{
+		if(name[i]=='.')
+		{
+			tmp_vec.push_back(tmp_str);
+			tmp_str="";
+			continue;
+		}
+		tmp_str+=name[i];
+	}
+	tmp_vec.push_back(tmp_str);
+	for(std::vector<std::string>::iterator i = tmp_vec.end(); i-- != tmp_vec.begin(); )
+	{
+		out+=*i;
+		out+='.';
+		
+	}
+	if(ipv6)
+	{
+		out+="ip6.arpa";
+	}
+	else
+	{
+		out+="in-addr.arpa";
+	}
+	return out;
 }
 
 std::string name_to_len_plus_label(std::string name)
@@ -246,8 +313,8 @@ void print_info_from_dns_response(char *buffer,int *dosavadni_delka_paketu)
 		char tmp[INET6_ADDRSTRLEN];//tmp buffer pro inet_ntop funkci
 		printf("%s\n",inet_ntop(AF_INET6,src,tmp,INET6_ADDRSTRLEN));
 	}
-	else if(rr_type_int == 5 || rr_type_int == 2)
-	{//rdata obsahuji jmeno (CNAME nebo NS)
+	else if(rr_type_int == 5 || rr_type_int == 2 || rr_type_int == 12)
+	{//rdata obsahuji jmeno (CNAME nebo NS nebo PTR)
 		std::string name_in_rdata = get_name_from_answer(buffer,*dosavadni_delka_paketu,&name_len);
 		printf("%s\n",name_in_rdata.c_str());//vypis jmena v odpovedi
 	}
@@ -442,51 +509,37 @@ int main(int argc, char **argv)
 		dns_hdr->flags |= 0b0000000100000000;//RD flag = 1
 	}
 	if(got_x)
-	{//inverzni dotaz
-		dns_hdr->flags |= 0b0000100000000000;//opcode = 1 (inverse query)
-		dns_hdr->ancount=htons(1);//zasilame 1 "odpoved"
-		dosavadni_delka_paketu+=1; //pridana 1 nula jako "anyname" (root)
-		struct rr_data *reverse_q = (struct rr_data*) (buffer+dosavadni_delka_paketu);
-		dosavadni_delka_paketu+=10;//mezi name a rdata je 80 bitu... tj posun o 10 bytu
-		reverse_q->cl=ntohs(1);//IN
+	{
 		if(got_6)
 		{
-			reverse_q->type = htons(28); //typ AAAA ipv6
-			reverse_q->rdlength = htons(16); //128 bitu
-			struct in6_addr ip6_a;
-			if(inet_pton(AF_INET6,name_to_resolve.c_str(),&ip6_a)==0)
-			{
-				fprintf(stderr,"Invalid ipv6 adress to make inverse query\n");
-				exit(-1);
-			}
-			memcpy(buffer+dosavadni_delka_paketu,&ip6_a,16);
-			dosavadni_delka_paketu+=16;
+			name_to_resolve=name_ip6_to_dots(name_to_resolve);//ipv6
+			name_to_resolve=name_reverse_ip(name_to_resolve,got_6);
 		}
 		else
 		{
-			reverse_q->type = htons(1); //typ A ipv4
-			reverse_q->rdlength = htons(4); //32 bitu
-			struct in_addr ip_a;
-			if(inet_pton(AF_INET,name_to_resolve.c_str(),&ip_a)==0)
-			{
-				fprintf(stderr,"Invalid ipv4 adress to make inverse query\n");
-				exit(-1);
+			uint8_t i_addr[16];
+			if(!inet_pton(AF_INET,name_to_resolve.c_str(),i_addr))
+			{//nepodarilo se prevest ipv4 adresu tudiz je neplatna
+				fprintf(stderr,"Neplatna ipv4 adresa\n");
+				exit(1);
 			}
-			memcpy(buffer+dosavadni_delka_paketu,&ip_a,4);
-			dosavadni_delka_paketu+=4;
+			name_to_resolve=name_reverse_ip(name_to_resolve,got_6); //ipv4
 		}
-		reverse_q->ttl=ntohl(100);//random hodnota... (ttl is not significat viz rfc1035)
-		
 		
 	}
+
+	dns_hdr->qdcount=htons(1);//zasilame 1 dotaz
+	std::string qname = name_to_len_plus_label(name_to_resolve);
+	strncpy(buffer+dosavadni_delka_paketu,qname.c_str(),qname.length());
+	dosavadni_delka_paketu+=qname.length()+1;
+	struct question *q = (struct question *) (buffer+dosavadni_delka_paketu);//delka dns headeru + delka stringu + \0
+	dosavadni_delka_paketu+=4; // qtype a qclass jsou na 4 bytech
+	if(got_x)
+	{
+		q->qtype = htons(12); //typ PTR (reverse query)
+	}
 	else
-	{//normalni dotaz
-		dns_hdr->qdcount=htons(1);//zasilame 1 dotaz
-		std::string qname = name_to_len_plus_label(name_to_resolve);
-		strncpy(buffer+dosavadni_delka_paketu,qname.c_str(),qname.length());
-		dosavadni_delka_paketu+=qname.length()+1;
-		struct question *q = (struct question *) (buffer+dosavadni_delka_paketu);//delka dns headeru + delka stringu + \0
-		dosavadni_delka_paketu+=4; // qtype a qclass jsou na 4 bytech
+	{
 		if(got_6)
 		{
 			q->qtype = htons(28); //typ AAAA ipv6
@@ -495,8 +548,11 @@ int main(int argc, char **argv)
 		{
 			q->qtype = htons(1); //typ A ipv4
 		}
-		q->qclass = htons(1); //typ IN (the internet)
 	}
+	
+	
+	q->qclass = htons(1); //typ IN (the internet)
+	
 	dns_hdr->flags=htons(dns_hdr->flags);
 	//zbytek casti dns headeru zustava 0
 	
@@ -556,21 +612,13 @@ int main(int argc, char **argv)
 	{
 		printf("Truncated: 0, ");
 	}
-	if(flags&(0b0000000100000000)) //vymaskovani RD flagu
-	{
-		printf("Recursion desired: 1, ");
+	if(flags&(0b0000000100000000) && flags&(0b0000000010000000)) //vymaskovani RD a RA flagu
+	{//pokud jsou oba zaraz jednalo se o rekurzi
+		printf("Recursion: 1, ");
 	}
 	else
 	{
-		printf("Recursion desired: 0, ");
-	}
-	if(flags&(0b0000000010000000)) //vymaskovani RA flagu
-	{
-		printf("Recursion available: 1, ");
-	}
-	else
-	{
-		printf("Recursion available: 0, ");
+		printf("Recursion: 0, ");
 	}
 	const char* rcode_ans_str = get_code_of_dns_rcode(rcode_ans);
 	if(rcode_ans_str)
