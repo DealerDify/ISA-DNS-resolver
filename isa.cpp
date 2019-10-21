@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
-#include <string.h> //memset
+#include <string.h>
 #include <vector> //parsovani argumentu
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -84,6 +84,7 @@ void wrong_params()
 	exit(1);
 }
 
+//funkce pro ziskani stringove reprezentace TYPE v dns odpovedi
 const char * get_code_of_dns_type(int type)
 {
 	switch (type)
@@ -91,13 +92,25 @@ const char * get_code_of_dns_type(int type)
 	case 1: return "A";
 	case 28: return "AAAA";
 	case 2: return "NS";
+	case 3: return "MD";
+	case 4: return "MF";
 	case 5: return "CNAME";	
 	case 6: return "SOA";	
+	case 7: return "MB";	
+	case 8: return "MG";	
+	case 9: return "MR";	
+	case 10: return "NULL";	
+	case 11: return "WKS";	
 	case 12: return "PTR";	
+	case 13: return "HINFO";	
+	case 14: return "MINFO";	
+	case 15: return "MX";	
 	case 16: return "TXT";
-	default: return NULL; //other are printes as chars
+	default: return NULL; //other are printed as uknown
 	}
 }
+
+//funkce pro ziskani stringove reprezentace CLASS v dns odpovedi
 const char * get_code_of_dns_class(int type)
 {
 	switch (type)
@@ -106,10 +119,11 @@ const char * get_code_of_dns_class(int type)
 	case 2: return "CS";
 	case 3: return "CH";	
 	case 4: return "HS";
-	default: return NULL; //not supported class
+	default: return NULL; //unknown
 	}
 }
 
+//funkce pro ziskani stringove reprezentace REPLY CODE v dns odpovedi
 const char * get_code_of_dns_rcode(int type)
 {
 	switch (type)
@@ -134,7 +148,7 @@ std::string name_ip6_to_dots(std::string name)
     if(inet_pton(AF_INET6,name.c_str(),i6_addr))
 	{
 		for(int i = 0 ; i < 16 ; i ++)
-		{
+		{//8 bitu rozdeleno na pul a prevedeno na hex
 			out+=hex_to_char[i6_addr[i]>>4];
 			out+='.';
 			out+=hex_to_char[i6_addr[i]&0b00001111];
@@ -150,7 +164,8 @@ std::string name_ip6_to_dots(std::string name)
     return out;
 }
 
-
+//prevadi ipv4 adresu na adresu pro reverzni dotaz
+//napriklad 127.0.0.1 na 1.0.0.127.in-addr.arpa (pokud je ipv6 argument na false)
 std::string name_reverse_ip(std::string name, bool ipv6)
 {
 	std::string out;
@@ -159,7 +174,7 @@ std::string name_reverse_ip(std::string name, bool ipv6)
 	for(int i = 0; i < name.length(); i ++)
 	{
 		if(name[i]=='.')
-		{
+		{//split po teckach
 			tmp_vec.push_back(tmp_str);
 			tmp_str="";
 			continue;
@@ -168,7 +183,7 @@ std::string name_reverse_ip(std::string name, bool ipv6)
 	}
 	tmp_vec.push_back(tmp_str);
 	for(std::vector<std::string>::iterator i = tmp_vec.end(); i-- != tmp_vec.begin(); )
-	{
+	{//cteme pozpatku a skladame string (otoceni stringu)
 		out+=*i;
 		out+='.';
 		
@@ -184,6 +199,8 @@ std::string name_reverse_ip(std::string name, bool ipv6)
 	return out;
 }
 
+//prevadi napriklad www.fit.cz na \3www\3fit\2cz
+//name = jmeno na prevod
 std::string name_to_len_plus_label(std::string name)
 {
 	std::string out;
@@ -335,13 +352,12 @@ void print_info_from_dns_response(char *buffer,int *dosavadni_delka_paketu)
 		printf("Minimum TTL: %d s\n",ntohl(soa->minimum));
 	}
 	else
-	{//rdata jsou brana jako text
-		std::string string_in_answer;
+	{//rdata jsou vypsana jako hex znaky
 		for(int i=*dosavadni_delka_paketu;i<*dosavadni_delka_paketu+rr_rlen_int;i++)
 		{
-			string_in_answer+=buffer[i];		
+			printf("%x",buffer[i]);//vypis dat v odpovedi		
 		}
-		printf("%s\n",string_in_answer.c_str());//vypis dat v odpovedi
+		printf("\n");
 		
 	}
 	
@@ -461,9 +477,7 @@ int main(int argc, char **argv)
 		wrong_params();
 	}
 
-	//printf("r(rekurze):%d\nx(reverzni):%d\nipv6:%d\nport:%d %d\nserver:%d %s\nadresa na preklad:%s\n",got_r,got_x,got_6,got_p,port_to_ask,got_s,server_to_ask.c_str(),name_to_resolve.c_str());
 //---------------------------------------END-ARGUMENTS PARSE-END-----------------------------------------
-
 
 /*--------------------------------------------------------------------------------
  *Z manualovyh stranek getaddrinfo
@@ -483,12 +497,12 @@ int main(int argc, char **argv)
 
     if(addr->sa_family==AF_INET)
     {
-        printf("Server to ask has ipv4: %s resolved: %s\n", server_to_ask.c_str(),inet_ntoa(((struct sockaddr_in *)addr)->sin_addr));
+        printf("Sending dns query to: %s\n",inet_ntoa(((struct sockaddr_in *)addr)->sin_addr));
     }
     else if(addr->sa_family==AF_INET6)
     {
         char str[INET6_ADDRSTRLEN];
-        printf("Server to ask has ipv6: %s resolved: %s\n", server_to_ask.c_str(),inet_ntop(addr->sa_family,&(((struct sockaddr_in6 *)addr)->sin6_addr),str,INET6_ADDRSTRLEN));
+        printf("Sending dns query to: %s\n",inet_ntop(addr->sa_family,&(((struct sockaddr_in6 *)addr)->sin6_addr),str,INET6_ADDRSTRLEN));
     }
     else
     {
@@ -496,7 +510,7 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
-	int dosavadni_delka_paketu = 0;
+	int dosavadni_delka_paketu = 0;//pomocna promenna urcujici "konec" paketu
 	char buffer[PCKT_LEN];
 	memset(buffer, 0, PCKT_LEN);
 
@@ -532,8 +546,8 @@ int main(int argc, char **argv)
 	std::string qname = name_to_len_plus_label(name_to_resolve);
 	strncpy(buffer+dosavadni_delka_paketu,qname.c_str(),qname.length());
 	dosavadni_delka_paketu+=qname.length()+1;
-	struct question *q = (struct question *) (buffer+dosavadni_delka_paketu);//delka dns headeru + delka stringu + \0
-	dosavadni_delka_paketu+=4; // qtype a qclass jsou na 4 bytech
+	struct question *q = (struct question *) (buffer+dosavadni_delka_paketu);
+	dosavadni_delka_paketu+=4; // qtype a qclass jsou na 4 bytech (struct question)
 	if(got_x)
 	{
 		q->qtype = htons(12); //typ PTR (reverse query)
@@ -542,19 +556,17 @@ int main(int argc, char **argv)
 	{
 		if(got_6)
 		{
-			q->qtype = htons(28); //typ AAAA ipv6
+			q->qtype = htons(28); //typ AAAA - ipv6
 		}
 		else
 		{
-			q->qtype = htons(1); //typ A ipv4
+			q->qtype = htons(1); //typ A - ipv4
 		}
 	}
 	
-	
 	q->qclass = htons(1); //typ IN (the internet)
 	
-	dns_hdr->flags=htons(dns_hdr->flags);
-	//zbytek casti dns headeru zustava 0
+	dns_hdr->flags=htons(dns_hdr->flags);//zbytek casti dns headeru zustava 0
 	
 	
 	int sd = socket(addr->sa_family, SOCK_DGRAM, IPPROTO_UDP);
@@ -591,6 +603,7 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 	alarm(0);//vypnuti alarmu pokud dosla odpoved
+	freeaddrinfo(result);//uvolneni pameti z getaddrinfo
 	dosavadni_delka_paketu = 0;
 	struct dns_header *dns_hdr_ans = (struct dns_header *) buffer;
 	dosavadni_delka_paketu += 12; //dns header zabira 12 bytu
@@ -598,38 +611,39 @@ int main(int argc, char **argv)
 	int rcode_ans = ntohs(dns_hdr_ans->flags) &0b1111; //posledni 4 bity jsou rcode
 	if(flags&(0b0000010000000000)) //vymaskovani AA flagu
 	{
-		printf("Authority: 1, ");
+		printf("Authoritative: Yes, ");
 	}
 	else
 	{
-		printf("Authority: 0, ");
-	}
-	if(flags&(0b0000001000000000)) //vymaskovani TC flagu
-	{
-		printf("Truncated: 1, ");
-	}
-	else
-	{
-		printf("Truncated: 0, ");
+		printf("Authoritative: No, ");
 	}
 	if(flags&(0b0000000100000000) && flags&(0b0000000010000000)) //vymaskovani RD a RA flagu
 	{//pokud jsou oba zaraz jednalo se o rekurzi
-		printf("Recursion: 1, ");
+		printf("Recursive: Yes, ");
 	}
 	else
 	{
-		printf("Recursion: 0, ");
+		printf("Recursive: No, ");
 	}
+	if(flags&(0b0000001000000000)) //vymaskovani TC flagu
+	{
+		printf("Truncated: Yes, ");
+	}
+	else
+	{
+		printf("Truncated: No, ");
+	}
+
 	const char* rcode_ans_str = get_code_of_dns_rcode(rcode_ans);
 	if(rcode_ans_str)
 	{
 		printf("Reply code: %d(%s)\n",rcode_ans,rcode_ans_str);
 	}
 	else
-	{
+	{//unknown reply code
 		printf("Reply code: %d\n",rcode_ans);
 	}
-	
+
 	printf("\n");
 
 
@@ -689,7 +703,6 @@ int main(int argc, char **argv)
 	{
 		print_info_from_dns_response(buffer, &dosavadni_delka_paketu);
 	}
-	
 	
 
 
