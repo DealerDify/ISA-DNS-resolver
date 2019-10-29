@@ -1,0 +1,43 @@
+DNS RESOLVER (./dns)
+
+Spuštění:
+./dns [-r] [-x] [-6] -s server [-p port] adresa
+
+U všech přepínačů nezáleží na pořadí. Přepínače nelze "spojovat" například ./dns -r6x, ale je potřeba je napsat odděleně tj ./dns -r -6 -x
+
+adresa:
+  vzhledem k tomu že zde taktéž nezáleží na pořadí, tak je jako adresa brán argument který před sebou nemá přepínač
+  v případě normálního dotazu je jméno posláno DNS serveru bez kontroly
+  v případě reverzního dotazu je ip adresa zkontrolována jestli je platná:
+    jako ipv4 adresa jako základní nastavení(pouze parametr -x) a jako ipv6 adresa pokud je kombinace parametrů -x -6
+-s server:
+	možno zapsat jako ip(ipv4 nebo ipv6) nebo doménové jméno
+  (v případě doménového jména je přeloženo na ip pomocí getaddrinfo a je na standartní výstup vypsáno ip jména)
+-r:	
+	možnost vyždaování rekurze, tato volba je nepovinná
+	nastavení recursion desired na 1 (server ale nemusí rekurzi podporovat)
+-x:
+	Reverzní dotaz (překlad ip na doménové jméno) (řešen pomocí PTR záznamů)
+-6:
+	Zasílání AAAA dotazu napísto A dotazu (v případě kombinace s přepínačem -x specifikuje verzi zadané ip, viz popis adresy nahoře)
+
+Příklad spuštění a výstupu:
+Spuštění:
+	./dns -s kazi.fit.vutbr.cz www.fit.vutbr.cz -r
+Výstup:
+	Sending dns query to: 147.229.8.12
+  Authoritative: Yes, Recursive: Yes, Truncated: No, Reply code: 0(OK)
+
+  Question section(1)
+  www.fit.vutbr.cz, A, IN
+  Answer section(1)
+  www.fit.vutbr.cz, A, IN, 14400, 147.229.9.23
+  Authority section(0)
+  Additional section(0)
+
+
+Návratová hodnota:
+	0 při úspěšném ukončení programu
+	nenulová hodnota při chybě s upřesňující chybovou hláškou na standartní chybový výstup
+
+Podrobnější informace o funkcionalitě programu v dokumentaci manual.pdf
