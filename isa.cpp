@@ -445,9 +445,9 @@ int main(int argc, char **argv)
 					fprintf(stderr,"Za parametrem -p musi nasledovat cislo portu");
 					wrong_params();
 				}
-				if (port_to_ask > 65535 || port_to_ask < 0)
+				if (port_to_ask > 65535 || port_to_ask < 1)
 				{	
-					fprintf(stderr, "Port ouf of range 0-65535\n");
+					fprintf(stderr, "Port ouf of range 1-65535\n");
 					wrong_params();
 				}
 				got_p=true;
