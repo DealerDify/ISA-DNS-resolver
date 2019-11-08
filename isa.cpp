@@ -246,7 +246,7 @@ std::string get_name_from_answer(char *buffer,int start_offset, int *name_len)
 		}
 		if((buffer[i]&0b11000000) ==  0b11000000) //jedna se o pointer (zacina dvema jednickami)
 		{
-			offset = (buffer[i]&(0b00111111))+(buffer[i+1]&(0b11111111));//offset je za 2 zminenymi jednickami na zbyvajicich 14 bitech
+			offset = ((buffer[i]&(0b00111111)) * 256)+(buffer[i+1]&(0b11111111));//offset je za 2 zminenymi jednickami na zbyvajicich 14 bitech
 			i = offset;
 		}
 		else
