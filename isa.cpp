@@ -468,6 +468,11 @@ int main(int argc, char **argv)
 			}
 			got_name_to_ask=true;
 			name_to_resolve = arguments[i];
+			if(name_to_resolve.length() > 253)
+			{
+				fprintf(stderr, "Maximalni delka adresy je 253 znaku\n");
+				wrong_params();
+			}
 		}
 	}
 
